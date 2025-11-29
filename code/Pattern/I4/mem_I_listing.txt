@@ -1,0 +1,59 @@
+#0x0000: auipc	t1, 0
+#0x0004: jalr	x0, t1, 172  <-- This jumps to 0x00a0 (main)
+L0:
+#0x0008: slli	t1, a1, 2       # t1 = index * 4 (byte offset)
+#0x000c: add	    t1, a0, t1      # t1 = array_base + offset (address of array[j])
+#0x0010: lw	    t0, 0(t1)       # t0 = array[j]
+#0x0014: lw	    t2, 4(t1)       # t2 = array[j+1]
+#0x0018: sw	    t2, 0(t1)       # array[j] = t2
+#0x001c: sw	    t0, 4(t1)       # array[j+1] = t0
+#0x0020: jalr	x0, ra, 0       # return
+L1:
+#0x0024: addi	sp, sp, -0x14
+#0x0028: sw	    ra, 0x10(sp)
+#0x002c: sw	    s6, 0xc(sp)
+#0x0030: sw	    s5, 8(sp)
+#0x0034: sw	    s4, 4(sp)
+#0x0038: sw	    s3, 0(sp)
+#0x003c: addi	s5, a0, 0     
+#0x0040: addi	s6, a1, 0   
+#0x0044: addi	s3, zero, 0  
+L2:
+#0x0048: addi    t0, s6, -1      # t0 = size - 1 (outer loop bound)
+#0x004c: bge     s3, t0, L5      # if (i >= size - 1) goto L5 (end)
+#0x0050: addi	s4, zero, 0     # j = 0
+#0x0054: sub     t1, s6, s3      # t1 = size - i
+#0x0058: addi    t1, t1, -1      # t1 = (size - i - 1)
+L3: 
+#0x005c: bge     s4, t1, L4      # if (j >= (size - i - 1)) goto L4 (end inner)
+#0x0060: slli    t2, s4, 2       # t2 = j * 4 (byte offset)
+#0x0064: add     t2, s5, t2      # t2 = array_base + offset (address of array[j])
+#0x0068: lw      t3, 0(t2)       # t3 = array[j]
+#0x006c: lw      t4, 4(t2)       # t4 = array[j+1]  
+#0x0070: ble     t3, t4, L_NOSWAP # if (array[j] <= array[j+1]), skip swap
+#0x0074: addi    a0, s5, 0       # arg0 = array base
+#0x0078: addi    a1, s4, 0       # arg1 = j
+#0x007c: jal     ra, L0          # call swap(array, j)
+L_NOSWAP:
+#0x0080: addi    s4, s4, 1       # j++
+#0x0084: jal     x0, L3          # goto L3 (inner loop)
+L4:
+#0x0088: addi    s3, s3, 1       # i++
+#0x008c: jal     x0, L2          # goto L2 (outer loop)
+L5:
+#0x0090: lw	    s3, 0(sp)
+#0x0094: lw	    s4, 4(sp)
+#0x0098: lw	    s5, 8(sp)
+#0x009c: lw	    s6, 0xc(sp)
+#0x00a0: lw	    ra, 0x10(sp)
+#0x00a4: addi	sp, sp, 0x14
+#0x00a8: jalr	x0, ra, 0       # return
+main:
+#0x00ac: auipc	a0, 0           # a0 = pc
+#0x00b0: addi	a0, a0, 0x24    # a0 = pc + 0x24 (Address of array base: 0x00c4)
+#0x00b4: auipc	t0, 0           # t0 = pc
+#0x00b8: addi	t0, t0, 0x18    # t0 = pc + 0x18 (Address of array size: 0x00c0) 
+#0x00bc: lw	    a1, 0(t0)       # a1 = mem[t0] (Load array size)
+#0x00c0: jal	    ra, L1          # CALL THE SORT FUNCTION (L1)
+#0x00c4: addi	a0, s4, 0       # Set exit code (s4 is restored, so value is ok)
+#0x00c8: ecall                   # Exit program
