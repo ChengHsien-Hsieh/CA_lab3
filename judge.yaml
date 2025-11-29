@@ -1,0 +1,84 @@
+# Directory of source code
+source:
+  path: code/src
+
+# Directory of supplied code
+supplied:
+  path: code/supplied
+
+tb:
+  path: code/tb
+
+pattern:
+  path: code/Pattern
+
+log: 
+  path: log
+
+lib: 
+  path: nangate/NanGate45/lib
+
+# Directory of built code
+# The directory will be created if it does not exist
+# Before judging, the judger will clean the directory
+build:
+  path: build
+
+log:
+  path: log
+# Test case config
+# The judger will find all test cases in the directory
+tasks:
+  path: code/Pattern
+  format:
+    input: I<tasks::format::index>/mem_I.dat
+    expect: I<tasks::format::index>/golden.dat
+    index: "[1-4]"
+
+# Compile config
+# The judger does compilation before judging
+# If the compilation fails, the judger will return a compile error
+setup:
+  timeout: 600
+  commands:
+    
+    - yosys -l <log::path>/cpu_syn.log -p "
+        read_liberty -lib <lib::path>/NangateOpenCellLibrary_typical.lib;
+        read_verilog  <source::path>/*.v;
+        hierarchy -top CPU;
+        proc; opt_clean;
+        fsm; opt_clean;
+        techmap; opt_clean;
+        flatten CPU;
+        dfflibmap -liberty <lib::path>/NangateOpenCellLibrary_typical.lib;
+        abc -liberty <lib::path>/NangateOpenCellLibrary_typical.lib;
+        stat -liberty <lib::path>/NangateOpenCellLibrary_typical.lib;
+      "
+    - yosys -l <log::path>/cache_syn.log -p "
+        read_liberty -lib <lib::path>/NangateOpenCellLibrary_typical.lib;
+        read_verilog <source::path>/cache.v;
+        hierarchy -top Cache;
+        proc; opt_clean;
+        fsm; opt_clean;
+        techmap; opt_clean;
+        flatten Cache;
+        dfflibmap -liberty <lib::path>/NangateOpenCellLibrary_typical.lib;
+        abc -liberty <lib::path>/NangateOpenCellLibrary_typical.lib;
+        stat -liberty <lib::path>/NangateOpenCellLibrary_typical.lib;
+      "
+
+# Judge config
+# For each test case, the judger does judging after execution0
+# If the judging fails, the test case fails
+process:
+  timeout: 60
+  commands:
+    - iverilog -g2012 -DDOCKER -DI<id> -o cpu <source::path>/*.v <supplied::path>/*.v <tb::path>/*.v
+    # 1. Run the simulation
+    - vvp ./cpu  | grep -v "Not enough words" | tee simulation_output.txt 
+    
+    # 2. Copy output for logging
+    - cp simulation_output.txt <log::path>/output_<id>.txt
+    
+    # 3. Check for Pass/Fail
+    - grep -q "PASS" simulation_output.txt && ! grep -q "FAIL" simulation_output.txt
