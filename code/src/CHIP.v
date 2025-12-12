@@ -25,237 +25,120 @@ module CPU #(                                                                   
 //----------------------------- DO NOT MODIFY THE I/O INTERFACE!! ------------------------------//
 
 // -------------------------------------------------------
-// Instruction Decode
+// Control Unit
 // -------------------------------------------------------
-    wire [6:0]  opcode = i_IMEM_data[6:0];
-    wire [2:0]  funct3 = i_IMEM_data[14:12];
-    wire [6:0]  funct7 = i_IMEM_data[31:25];
-    wire [4:0]  rs1_addr = i_IMEM_data[19:15];
-    wire [4:0]  rs2_addr = i_IMEM_data[24:20];
-    wire [4:0]  rd_addr = i_IMEM_data[11:7];
+    /* Control Signals */
+    wire        ALUSrcA;
+    wire        JAL;
+    wire        JALR;
+    wire        Branch;
+    wire        MemRead;
+    wire        MemToReg;
+    wire        MemWrite;
+    wire        ALUSrcB;
+    wire        RegWrite;
+    wire [3:0]  ALUCtrl;
+    wire        is_ecall;
 
-// -------------------------------------------------------
-// Control Signals
-// -------------------------------------------------------
-    reg         reg_write;
-    reg  [1:0]  alu_op;
-    reg         alu_src;
-    reg         mem_read;
-    reg         mem_write;
-    reg         mem_to_reg;
-    reg         branch;
-    reg         jal;
-    reg         jalr;
-    reg         auipc_sel;
-    reg         is_ecall;
-
-    // ALU Control
-    reg  [3:0]  alu_control;
-    
-    // Opcode decode
-    localparam OP_R     = 7'b0110011;
-    localparam OP_I     = 7'b0010011;
-    localparam OP_LOAD  = 7'b0000011;
-    localparam OP_STORE = 7'b0100011;
-    localparam OP_BRANCH= 7'b1100011;
-    localparam OP_JAL   = 7'b1101111;
-    localparam OP_JALR  = 7'b1100111;
-    localparam OP_AUIPC = 7'b0010111;
-    localparam OP_SYSTEM= 7'b1110011;
-
-    always @(*) begin
-        // Default values
-        reg_write = 1'b0;
-        alu_src = 1'b0;
-        mem_read = 1'b0;
-        mem_write = 1'b0;
-        mem_to_reg = 1'b0;
-        branch = 1'b0;
-        jal = 1'b0;
-        jalr = 1'b0;
-        auipc_sel = 1'b0;
-        is_ecall = 1'b0;
-        alu_control = 4'b0000;
-
-        case (opcode)
-            OP_R: begin  // R-type
-                reg_write = 1'b1;
-                alu_src = 1'b0;
-                case ({funct7, funct3})
-                    10'b0000000_000: alu_control = 4'b0000; // ADD
-                    10'b0100000_000: alu_control = 4'b0001; // SUB
-                    10'b0000000_111: alu_control = 4'b0010; // AND
-                    10'b0000000_100: alu_control = 4'b0011; // XOR
-                    10'b0000001_000: alu_control = 4'b0100; // MUL
-                    default: alu_control = 4'b0000;
-                endcase
-            end
-            OP_I: begin  // I-type (ADDI, SLLI, SLTI, SRAI)
-                reg_write = 1'b1;
-                alu_src = 1'b1;
-                case (funct3)
-                    3'b000: alu_control = 4'b0000; // ADDI
-                    3'b001: alu_control = 4'b0101; // SLLI
-                    3'b010: alu_control = 4'b0110; // SLTI
-                    3'b101: alu_control = 4'b0111; // SRAI
-                    default: alu_control = 4'b0000;
-                endcase
-            end
-            OP_LOAD: begin  // LW
-                reg_write = 1'b1;
-                alu_src = 1'b1;
-                mem_read = 1'b1;
-                mem_to_reg = 1'b1;
-                alu_control = 4'b0000; // ADD for address
-            end
-            OP_STORE: begin  // SW
-                alu_src = 1'b1;
-                mem_write = 1'b1;
-                alu_control = 4'b0000; // ADD for address
-            end
-            OP_BRANCH: begin  // BEQ, BNE, BLT, BGE
-                branch = 1'b1;
-                case (funct3)
-                    3'b000: alu_control = 4'b1000; // BEQ
-                    3'b001: alu_control = 4'b1001; // BNE
-                    3'b100: alu_control = 4'b1010; // BLT
-                    3'b101: alu_control = 4'b1011; // BGE
-                    default: alu_control = 4'b1000;
-                endcase
-            end
-            OP_JAL: begin  // JAL
-                reg_write = 1'b1;
-                jal = 1'b1;
-            end
-            OP_JALR: begin  // JALR
-                reg_write = 1'b1;
-                jalr = 1'b1;
-                alu_src = 1'b1;
-            end
-            OP_AUIPC: begin  // AUIPC
-                reg_write = 1'b1;
-                auipc_sel = 1'b1;
-                alu_src = 1'b1;  // Use immediate
-                alu_control = 4'b0000;  // ADD PC + imm
-            end
-            OP_SYSTEM: begin  // ECALL
-                if (funct3 == 3'b000 && i_IMEM_data[31:20] == 12'b0)
-                    is_ecall = 1'b1;
-            end
-        endcase
-    end
+    Control control_unit(
+        .i_OPcode    (i_IMEM_data[6:0]),
+        .i_Funct3    (i_IMEM_data[14:12]),
+        .i_Funct7    (i_IMEM_data[31:25]),
+        .imm_system  (i_IMEM_data[31:20]),
+        .o_ALUSrcA   (ALUSrcA),
+        .o_JAL       (JAL),
+        .o_JALR      (JALR),
+        .o_Branch    (Branch),
+        .o_MemRead   (MemRead),
+        .o_MemToReg  (MemToReg),
+        .o_MemWrite  (MemWrite),
+        .o_ALUSrcB   (ALUSrcB),
+        .o_RegWrite  (RegWrite),
+        .o_ALUCtrl   (ALUCtrl),
+        .o_is_ecall  (is_ecall)
+    );
 
 // -------------------------------------------------------
 // Immediate Generator
 // -------------------------------------------------------
-    reg [BIT_W-1:0] imm;
-    always @(*) begin
-        case (opcode)
-            OP_I, OP_LOAD, OP_JALR:  // I-type
-                imm = {{20{i_IMEM_data[31]}}, i_IMEM_data[31:20]};
-            OP_STORE:  // S-type
-                imm = {{20{i_IMEM_data[31]}}, i_IMEM_data[31:25], i_IMEM_data[11:7]};
-            OP_BRANCH:  // B-type
-                imm = {{19{i_IMEM_data[31]}}, i_IMEM_data[31], i_IMEM_data[7], i_IMEM_data[30:25], i_IMEM_data[11:8], 1'b0};
-            OP_AUIPC:  // U-type
-                imm = {i_IMEM_data[31:12], 12'b0};
-            OP_JAL:  // J-type
-                imm = {{11{i_IMEM_data[31]}}, i_IMEM_data[31], i_IMEM_data[19:12], i_IMEM_data[20], i_IMEM_data[30:21], 1'b0};
-            default:
-                imm = 32'b0;
-        endcase
-    end
+    wire [BIT_W-1:0] Imm;
+    
+    ImmGen #(.BIT_W(BIT_W)) imm_gen(
+        .i_Instruction (i_IMEM_data),
+        .i_OPcode      (i_IMEM_data[6:0]),
+        .o_Imm         (Imm)
+    );
 
 // -------------------------------------------------------
 // Register File
 // -------------------------------------------------------
-    wire [BIT_W-1:0] rdata1, rdata2;
-    wire [BIT_W-1:0] reg_wdata;
+    wire [BIT_W-1:0] RS1Data, RS2Data;
+    wire [BIT_W-1:0] WriteData;
     
     Reg_file reg0(               
-        .i_clk  (i_clk),             
-        .i_rst_n(i_rst_n), 
-        .wen    (reg_write && !i_DMEM_stall),
-        .rs1    (rs1_addr),
-        .rs2    (rs2_addr),
-        .rd     (rd_addr),
-        .wdata  (reg_wdata),
-        .rdata1 (rdata1),
-        .rdata2 (rdata2)
+        .i_clk   (i_clk),             
+        .i_rst_n (i_rst_n), 
+        .wen     (RegWrite && !i_DMEM_stall),
+        .rs1     (i_IMEM_data[19:15]),
+        .rs2     (i_IMEM_data[24:20]),
+        .rd      (i_IMEM_data[11:7]),
+        .wdata   (WriteData),
+        .rdata1  (RS1Data),
+        .rdata2  (RS2Data)
+    );
+
+// -------------------------------------------------------
+// PC Module
+// -------------------------------------------------------
+    wire [BIT_W-1:0] PC;
+    wire [BIT_W-1:0] PC_plus4;
+    wire             BranchTaken;
+    
+    PC_Module #(.BIT_W(BIT_W)) pc_module(
+        .i_clk         (i_clk),
+        .i_rst_n       (i_rst_n),
+        .i_stall       (i_DMEM_stall),
+        .i_Branch      (Branch),
+        .i_JAL         (JAL),
+        .i_JALR        (JALR),
+        .i_BranchTaken (BranchTaken),
+        .i_Imm         (Imm),
+        .i_RS1Data     (RS1Data),
+        .o_PC          (PC),
+        .o_PCPlus4     (PC_plus4)
     );
 
 // -------------------------------------------------------
 // ALU
 // -------------------------------------------------------
-    wire [BIT_W-1:0] alu_in1 = auipc_sel ? PC : rdata1;
-    wire [BIT_W-1:0] alu_in2 = alu_src ? imm : rdata2;
-    reg  [BIT_W-1:0] alu_result;
-    reg              alu_zero;
-
-    always @(*) begin
-        alu_result = 32'b0;
-        alu_zero = 1'b0;
-        case (alu_control)
-            4'b0000: alu_result = alu_in1 + alu_in2;  // ADD/ADDI
-            4'b0001: alu_result = alu_in1 - alu_in2;  // SUB
-            4'b0010: alu_result = alu_in1 & alu_in2;  // AND
-            4'b0011: alu_result = alu_in1 ^ alu_in2;  // XOR
-            4'b0100: alu_result = alu_in1 * alu_in2;  // MUL
-            4'b0101: alu_result = alu_in1 << alu_in2[4:0];  // SLLI
-            4'b0110: alu_result = ($signed(alu_in1) < $signed(alu_in2)) ? 32'b1 : 32'b0;  // SLTI
-            4'b0111: alu_result = $signed(alu_in1) >>> alu_in2[4:0];  // SRAI
-            4'b1000: alu_zero = (alu_in1 == alu_in2);  // BEQ
-            4'b1001: alu_zero = (alu_in1 != alu_in2);  // BNE
-            4'b1010: alu_zero = ($signed(alu_in1) < $signed(alu_in2));  // BLT
-            4'b1011: alu_zero = ($signed(alu_in1) >= $signed(alu_in2));  // BGE
-            default: alu_result = 32'b0;
-        endcase
-    end
-
-// -------------------------------------------------------
-// PC Logic
-// -------------------------------------------------------
-    reg [BIT_W-1:0] PC, PC_next;
-    wire [BIT_W-1:0] PC_plus4 = PC + 4;
-    wire [BIT_W-1:0] PC_branch = PC + imm;
-    wire [BIT_W-1:0] PC_jalr = (rdata1 + imm) & ~32'b1;
-    wire take_branch = branch & alu_zero;
-
-    always @(*) begin
-        if (jal)
-            PC_next = PC_branch;
-        else if (jalr)
-            PC_next = PC_jalr;
-        else if (take_branch)
-            PC_next = PC_branch;
-        else
-            PC_next = PC_plus4;
-    end
-
-    always @(posedge i_clk or negedge i_rst_n) begin
-        if (!i_rst_n)
-            PC <= 32'h00010000; // Do not modify this value!!!
-        else if (!i_DMEM_stall)  // Stall mechanism
-            PC <= PC_next;
-    end
+    wire [BIT_W-1:0] ALUIn1 = ALUSrcA ? PC : RS1Data;
+    wire [BIT_W-1:0] ALUIn2 = ALUSrcB ? Imm : RS2Data;
+    wire [BIT_W-1:0] ALUResult;
+    
+    ALU #(.BIT_W(BIT_W)) alu(
+        .i_ALUIn1      (ALUIn1),
+        .i_ALUIn2      (ALUIn2),
+        .i_ALUCtrl     (ALUCtrl),
+        .o_ALUResult   (ALUResult),
+        .o_BranchTaken (BranchTaken)
+    );
 
 // -------------------------------------------------------
 // Write Back
 // -------------------------------------------------------
-    assign reg_wdata = mem_to_reg ? i_DMEM_rdata : 
-                       (jal | jalr) ? PC_plus4 : 
-                       auipc_sel ? alu_result : 
-                       alu_result;
+    assign WriteData = MemToReg ? i_DMEM_rdata : 
+                       (JAL | JALR) ? PC_plus4 : 
+                       ALUResult;
 
 // -------------------------------------------------------
 // Memory Interface
 // -------------------------------------------------------
     assign o_IMEM_addr = PC;
     assign o_IMEM_cen = 1'b1;
-    assign o_DMEM_cen = mem_read | mem_write;
-    assign o_DMEM_wen = mem_write;
-    assign o_DMEM_addr = alu_result;
-    assign o_DMEM_wdata = rdata2;
+    assign o_DMEM_cen = MemRead | MemWrite;
+    assign o_DMEM_wen = MemWrite;
+    assign o_DMEM_addr = ALUResult;
+    assign o_DMEM_wdata = RS2Data;
 
 // -------------------------------------------------------
 // Finish Signal
