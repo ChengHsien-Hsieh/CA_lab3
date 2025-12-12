@@ -80,5 +80,8 @@ process:
     # 2. Copy output for logging
     - cp simulation_output.txt <log::path>/output_<id>.txt
     
-    # 3. Check for Pass/Fail
+    # 3. Copy VCD waveform for debugging
+    - cp Final.vcd <log::path>/waveform_<id>.vcd
+    
+    # 4. Check for Pass/Fail
     - grep -q "PASS" simulation_output.txt && ! grep -q "FAIL" simulation_output.txt
