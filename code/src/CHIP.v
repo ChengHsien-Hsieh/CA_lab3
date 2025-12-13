@@ -143,7 +143,8 @@ module CPU #(                                                                   
 // -------------------------------------------------------
 // Finish Signal
 // -------------------------------------------------------
-    assign o_finish = is_ecall;
+    // assign o_finish = is_ecall;
+    assign o_finish = i_cache_finish; // 等 Cache 說好才是真的好
     assign o_proc_finish = is_ecall;
 
 endmodule

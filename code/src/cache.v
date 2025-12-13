@@ -29,7 +29,7 @@ module Cache#(
     // 1. 參數定義 (Parameters)
     // ---------------------------------------------------------------
     assign o_cache_available = 1; // 啟用 Cache
-    assign o_cache_finish = i_proc_finish; // Pass through
+    assign o_cache_finish = (current_state == S_DONE);
 
     // Cache 規格: 4 Blocks, 每個 Block 128 bits (4 words)
     parameter CACHE_SIZE = 4;
@@ -48,11 +48,15 @@ module Cache#(
     localparam S_COMPARE    = 2'd1;
     localparam S_ALLOCATE   = 2'd2; // Read from Mem
     localparam S_WRITE_BACK = 2'd3; // Write to Mem
+    localparam S_FLUSH       = 3'd4; // 檢查 dirty
+    localparam S_FLUSH_WRITE = 3'd5; // 寫回 memory
+    localparam S_DONE        = 3'd6; // 全部完成
 
     // ---------------------------------------------------------------
     // 2. 內部暫存器 (Registers & Arrays)
     // ---------------------------------------------------------------
-    reg [1:0] current_state, next_state;
+    reg [2:0] current_state, next_state;
+    reg [2:0] flush_counter;
 
     // Cache Storage
     reg [CACHE_LINE_W-1:0] cache_data  [0:CACHE_SIZE-1];
@@ -99,10 +103,15 @@ module Cache#(
     always @(*) begin
         case (current_state)
             S_IDLE: begin
-                if (i_proc_cen) // Valid CPU Request
+                if (i_proc_finish) begin
+                    next_state = S_FLUSH; // 1. 收到結束訊號，開始 Flush
+                end
+                else if (i_proc_cen) begin
                     next_state = S_COMPARE;
-                else 
+                end
+                else begin
                     next_state = S_IDLE;
+                end
             end
 
             S_COMPARE: begin
@@ -131,6 +140,32 @@ module Cache#(
                     next_state = S_WRITE_BACK;
             end
 
+            // --- Flush FSM ---
+            S_FLUSH: begin
+                if (flush_counter >= CACHE_SIZE) begin
+                    next_state = S_DONE; // 全部掃完
+                end
+                else if (cache_valid[flush_counter] && cache_dirty[flush_counter]) begin
+                    next_state = S_FLUSH_WRITE; // 發現髒資料，去寫回
+                end
+                else begin
+                    next_state = S_FLUSH; // 乾淨的，繼續掃下一個 (會在 seq logic 加 counter)
+                end
+            end
+
+            S_FLUSH_WRITE: begin
+                if (!i_mem_stall) begin
+                    next_state = S_FLUSH; // 寫完了，回去繼續掃描
+                end
+                else begin
+                    next_state = S_FLUSH_WRITE; // 等 Memory
+                end
+            end
+
+            S_DONE: begin
+                next_state = S_DONE; // 停在這裡，並拉高 o_cache_finish
+            end
+
             default: next_state = S_IDLE;
         endcase
     end
@@ -149,12 +184,16 @@ module Cache#(
 
     // Memory Interface
     // 只有在 Allocate (Read) 或 WriteBack (Write) 時啟用
-    assign o_mem_cen = (current_state == S_ALLOCATE) || (current_state == S_WRITE_BACK);
-    assign o_mem_wen = (current_state == S_WRITE_BACK); // 1 = Write
+    assign o_mem_cen = (current_state == S_ALLOCATE) || 
+                    (current_state == S_WRITE_BACK) || 
+                    (current_state == S_FLUSH_WRITE); // 新增 Flush Write
+
+    assign o_mem_wen = (current_state == S_WRITE_BACK) || 
+                    (current_state == S_FLUSH_WRITE); // 新增 Flush Write
 
     // Memory Data (Write Back 時輸出舊資料)
-    assign o_mem_wdata = current_line_data;
-
+    assign o_mem_wdata = (current_state == S_FLUSH_WRITE) ? cache_data[flush_counter] : current_line_data;
+    
     // Memory Address
     // Write Back: 用舊的 Tag 組合出位址
     // Allocate: 用新的 Tag (CPU 請求的) 組合出位址
@@ -163,6 +202,9 @@ module Cache#(
     always @(*) begin
         if (current_state == S_WRITE_BACK)
             mem_addr_internal = {current_tag, index_field, 4'b0000};
+        else if (current_state == S_FLUSH_WRITE)
+            // Flush 時，位址來自 counter 指向的 block
+            mem_addr_internal = {cache_tag[flush_counter], flush_counter[1:0], 4'b0000};
         else
             mem_addr_internal = {tag_field, index_field, 4'b0000};
     end
@@ -174,22 +216,21 @@ module Cache#(
     always @(posedge i_clk or negedge i_rst_n) begin
         if (!i_rst_n) begin
             current_state <= S_IDLE;
+            flush_counter <= 0;
             for (i=0; i<CACHE_SIZE; i=i+1) begin
                 cache_valid[i] <= 1'b0;
                 cache_dirty[i] <= 1'b0;
                 cache_tag[i]   <= 0;
                 cache_data[i]  <= 0;
             end
-        end
-        else begin
+        end else begin
             current_state <= next_state;
-
+            
             // Cache Data Update Logic
             case (current_state)
                 S_COMPARE: begin
                     if (is_hit && i_proc_wen) begin
                         // Write Hit: Update Data & Set Dirty
-                        // 使用 Part-select 寫入對應的 32 bits
                         cache_data[index_field][(word_offset*32) +: 32] <= i_proc_wdata;
                         cache_dirty[index_field] <= 1'b1;
                     end
@@ -204,7 +245,28 @@ module Cache#(
                         cache_dirty[index_field] <= 1'b0;
                     end
                 end
+
+                S_FLUSH_WRITE: begin
+                    if (!i_mem_stall) begin
+                        // Flush 完成後清除 dirty bit
+                        cache_dirty[flush_counter] <= 1'b0;
+                    end
+                end
             endcase
+
+            // Counter Logic
+            if (current_state == S_IDLE && i_proc_finish) begin
+                flush_counter <= 0; // 開始 Flush 前歸零
+            end
+            else if (current_state == S_FLUSH) begin
+                // 如果現在這塊是乾淨的，直接跳下一塊
+                if (!(cache_valid[flush_counter] && cache_dirty[flush_counter]))
+                    flush_counter <= flush_counter + 1;
+            end
+            else if (current_state == S_FLUSH_WRITE && !i_mem_stall) begin
+                // 寫完髒資料後，跳下一塊
+                flush_counter <= flush_counter + 1;
+            end
         end
     end
 
