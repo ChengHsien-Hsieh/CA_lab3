@@ -31,8 +31,8 @@ module Cache#(
     assign o_cache_available = 1;
     assign o_cache_finish = (current_state == S_DONE);
 
-    // Cache Specification: 4 Blocks, each Block 128 bits (4 words)
-    parameter CACHE_SIZE = 4;
+    // Cache Specification: Each Block 128 bits (4 words)
+    parameter CACHE_SIZE = 1; // Dynamically assignable cache size (number of lines)
     parameter CACHE_LINE_W = 128; // 4 * 32 bits
     
     // Index and Tag Calculation
@@ -58,7 +58,7 @@ module Cache#(
     // 2. Internal Registers & Arrays
     // ---------------------------------------------------------------
     reg [2:0] current_state, next_state;
-    reg [2:0] flush_counter;
+    reg [31:0] flush_counter;
 
     // Cache Storage
     reg [CACHE_LINE_W-1:0] cache_data  [0:CACHE_SIZE-1];
@@ -81,8 +81,15 @@ module Cache#(
     wire [1:0]         word_offset;
 
     assign tag_field   = proc_addr_real[ADDR_W-1 : ADDR_W-TAG_W];
-    assign index_field = proc_addr_real[BLOCK_OFFSET_W + BYTE_OFFSET_W +: INDEX_W]; // Dynamically calculate
-    assign word_offset = proc_addr_real[BYTE_OFFSET_W +: BLOCK_OFFSET_W];           // Dynamically calculate
+    // Handle CACHE_SIZE=1 case where INDEX_W=0
+    generate
+        if (INDEX_W == 0) begin
+            assign index_field = 0; // Only one cache line, index is always 0
+        end else begin
+            assign index_field = proc_addr_real[BLOCK_OFFSET_W + BYTE_OFFSET_W +: INDEX_W];
+        end
+    endgenerate
+    assign word_offset = proc_addr_real[BYTE_OFFSET_W +: BLOCK_OFFSET_W];
 
     // Read current Cache Line information
     wire [CACHE_LINE_W-1:0] current_line_data;
@@ -204,9 +211,13 @@ module Cache#(
     always @(*) begin
         if (current_state == S_WRITE_BACK)
             mem_addr_internal = {current_tag, index_field, 4'b0000};
-        else if (current_state == S_FLUSH_WRITE)
-            // Flush 時，位址來自 counter 指向的 block
-            mem_addr_internal = {cache_tag[flush_counter], flush_counter[1:0], 4'b0000};
+        else if (current_state == S_FLUSH_WRITE) begin
+            // Flush: Use correct INDEX_W bits from flush_counter
+            if (INDEX_W == 0)
+                mem_addr_internal = {cache_tag[0], 4'b0000};
+            else
+                mem_addr_internal = {cache_tag[flush_counter], flush_counter[INDEX_W-1:0], 4'b0000};
+        end
         else
             mem_addr_internal = {tag_field, index_field, 4'b0000};
     end
