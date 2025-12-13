@@ -32,7 +32,7 @@ module Cache#(
     assign o_cache_finish = (current_state == S_DONE);
 
     // Cache Specification: Each Block 128 bits (4 words)
-    parameter CACHE_SIZE = 1; // Dynamically assignable cache size (number of lines)
+    parameter CACHE_SIZE = 8; // Dynamically assignable cache size (number of lines)
     parameter CACHE_LINE_W = 128; // 4 * 32 bits
     
     // Index and Tag Calculation
@@ -80,12 +80,13 @@ module Cache#(
     wire [(INDEX_W > 0 ? INDEX_W-1 : 0) : 0] index_field;
     wire [1:0]         word_offset;
 
-    assign tag_field   = proc_addr_real[ADDR_W-1 : ADDR_W-TAG_W];
+    assign tag_field = proc_addr_real[ADDR_W-1 : ADDR_W-TAG_W];
     // Handle CACHE_SIZE=1 case where INDEX_W=0
     generate
         if (INDEX_W == 0) begin
             assign index_field = 0; // Only one cache line, index is always 0
-        end else begin
+        end
+        else begin
             assign index_field = proc_addr_real[BLOCK_OFFSET_W + BYTE_OFFSET_W +: INDEX_W];
         end
     endgenerate
@@ -103,8 +104,7 @@ module Cache#(
     assign current_dirty     = cache_dirty[index_field];
 
     // Determine if the current access is a cache hit
-    wire is_hit;
-    assign is_hit = current_valid && (current_tag == tag_field);
+    wire is_hit = current_valid && (current_tag == tag_field);
 
     // ---------------------------------------------------------------
     // 4. FSM: Next State Logic
