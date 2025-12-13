@@ -77,7 +77,7 @@ module Cache#(
     assign proc_addr_real = i_proc_addr - i_offset;
 
     wire [TAG_W-1:0]   tag_field;
-    wire [INDEX_W-1:0] index_field;
+    wire [(INDEX_W > 0 ? INDEX_W-1 : 0) : 0] index_field;
     wire [1:0]         word_offset;
 
     assign tag_field   = proc_addr_real[ADDR_W-1 : ADDR_W-TAG_W];
@@ -209,8 +209,12 @@ module Cache#(
     // Remember to add back offset
     reg [ADDR_W-1:0] mem_addr_internal;
     always @(*) begin
-        if (current_state == S_WRITE_BACK)
-            mem_addr_internal = {current_tag, index_field, 4'b0000};
+        if (current_state == S_WRITE_BACK) begin
+            if (INDEX_W == 0)
+                mem_addr_internal = {current_tag, 4'b0000};
+            else
+                mem_addr_internal = {current_tag, index_field, 4'b0000};
+        end
         else if (current_state == S_FLUSH_WRITE) begin
             // Flush: Use correct INDEX_W bits from flush_counter
             if (INDEX_W == 0)
@@ -218,8 +222,12 @@ module Cache#(
             else
                 mem_addr_internal = {cache_tag[flush_counter], flush_counter[INDEX_W-1:0], 4'b0000};
         end
-        else
-            mem_addr_internal = {tag_field, index_field, 4'b0000};
+        else begin
+            if (INDEX_W == 0)
+                mem_addr_internal = {tag_field, 4'b0000};
+            else
+                mem_addr_internal = {tag_field, index_field, 4'b0000};
+        end
     end
     assign o_mem_addr = mem_addr_internal + i_offset;
 
